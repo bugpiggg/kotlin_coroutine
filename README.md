@@ -16,3 +16,10 @@ period: 2023.01.17 ~
 
 ## Week 2
 
+- [Kotlin Coroutines library](week2.md)
+  - Coroutine builders
+  - Coroutine context
+  - Jobs and awaiting children
+  - Cancellation
+
+

@@ -1,5 +1,6 @@
 package coroutines
 
+import kotlinx.coroutines.delay
 import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 import kotlin.coroutines.Continuation
@@ -58,7 +59,7 @@ fun myFunction(continuation: Continuation<Unit>): Any {
     if (continuation.label == 0) {
         println("Before")
         continuation.label = 1
-        if (delay(1000, continuation) == COROUTINE_SUSPENDED){
+        if (delay_(1000) == COROUTINE_SUSPENDED){
             return COROUTINE_SUSPENDED
         }
     }
@@ -69,7 +70,7 @@ fun myFunction(continuation: Continuation<Unit>): Any {
     error("Impossible")
 }
 
-fun delay(i: Int, continuation: MyFunctionContinuation): Any {
+fun delay_(i: Int): Any {
     TODO("Not yet implemented")
 }
 
