@@ -225,4 +225,113 @@ resumeWithException()을 활용하여 suspension 포인트에서 exception 이 �
 
 ## Coroutines under the hood
 
+코루틴의 내부 동작에 대해 알아보자
+
+### Contionuation-passing style
+
+코틀린에서는 continuation-passing style 을 활용하여 코루틴을 구현함  
+
+
+예를 들어 아래 3개 함수는
+```kotlin
+suspend fun getUser(): User?
+suspend fun setUser(user: User)
+suspend fun checkAvailability(flight: Flight): Boolean
+```
+내부적으로 아래와 같이 구현됨
+```kotlin
+fun getUser(continuation: Continuation<*>): Any?
+fun setUser(user: User, continuation: Continuation<*>): Any
+fun checkAvailability(
+    flight: Flight,
+    continuation: Continuation<*>
+): Any
+```
+리턴 타입의 경우 Any 혹은 Any? 인데 이는 위 함수의 리턴 값으로 COROUTINE_SUSPENDED 라는 값이 추가적으로 반환될 수 있게 변환되기 때문임.
+
+### A very simple function
+예를 들어 아래 함수가 있다고 하자
+```kotlin
+suspend fun myFunction() {
+    println("before")
+    delay(100)
+    println("after")
+}
+```
+이 함수는 아래와 같이 내부적으로 변환됨.  
+1. 우선 인자의 continuation 은 내부 상태를 저장하기 위해 함수만의 Continuation 으로 감싸줌
+2. 함수는 맨 처음과, suspension 후 시점에서 호출될 수 있기에 이를 구분하기 위한 label 추가
+3. 마지막으로, suspension 될 때 suspend 함수는 COROUTINE_SUSPENDED 를 반환함. 이는 상위 호출함수들로 전파되고 스레드 점유하던 것을 릴리즈함
+> 여기서 조금 의문인 점은, suspension 된 후 다시 위 함수를 호출하는(resume 되는) 순간을 위해 다른 스레드에서 동작을 계속 수행하고 있는 것이 아닌가 의문이 들었음.... 추후 설명하는 부분이 있겠지?
+
+```kotlin
+fun myFunction(continuation: Continuation<Unit>): Any {
+    val continuation = continuation as? MyFunctionContinuation
+        ?: MyFunctionContinuation(continuation)
+    if (continuation.label == 0) {
+        println("Before")
+        continuation.label = 1
+        if (delay(1000, continuation) == COROUTINE_SUSPENDED){
+            return COROUTINE_SUSPENDED
+        }
+    }
+    if (continuation.label == 1) {
+        println("After")
+        return Unit
+    }
+    error("Impossible")
+}
+
+class MyFunctionContinuation(
+    val completion: Continuation<Unit>
+) : Continuation<Unit> {
+    override val context: CoroutineContext
+        get() = completion.context
+    var label = 0
+    var result: Result<Any>? = null
+    override fun resumeWith(result: Result<Unit>) {
+        this.result = result
+        val res = try {
+            val r = myFunction(this)
+            if (r == COROUTINE_SUSPENDED) return
+            Result.success(r as Unit)
+        } catch (e: Throwable) {
+            Result.failure(e)
+        }
+        completion.resumeWith(res)
+    }
+}
+```
+만약 suspend 함수 내부적으로 지역변수가 존재한다면, 이는 continuation 에서 필드로 가지고 있음.  
+만약 suspend 함수가 인자를 가지고 있다면, 이도 마찬가지로 continuation 에서 필드로 가지고 있음.
+
+
+### The call stack
+
+suspend 할 때, 스레드를 릴리즈 함. 이때 call stack 도 같이 비워 짐  
+재개를 위해서는 call stack이 가지고 있는 정보들을 어딘가에 가지고 있어야 함. 이때 continuation 이 사용 됨.  
+마치 huge onion 처럼 continuation 내부에 다른 상위호출함수의 continuation 을 가지기에 call stack과 유사한 기능을 할 수 있음.  
+
+```kotlin
+override fun resumeWith(result: Result<String>) {
+    this.result = result
+    val res = try {
+        val r = printUser(token, this)
+        if (r == COROUTINE_SUSPENDED) return
+        Result.success(r as Unit)
+    } catch (e: Throwable) {
+        Result.failure(e)
+    }
+    completion.resumeWith(res)
+}
+```
+실제 구현에서는 위와 같은 재귀 대신, while문을 이용한 최적화가 적용되어 있다
+
+--- 
+
 ## Coroutines: built-in support vs library
+
+코틀린은 언어에서 제공하는 built-in support와 kotlinx.cortouines library 2개로 나뉨
+- built-in support의 경우 자유도가 높지만 편리하게 활용하기는 어려움
+- 라이브러리의 경우 활용하기 쉽고, 개발자에게 구체적인 concurrence style 을 제공함
+
