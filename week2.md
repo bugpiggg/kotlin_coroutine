@@ -195,7 +195,7 @@ suspend fun main(): Unit = coroutineScope {
 ```
 
 ### Summary
-![img.png](img.png)
+![img.png](img/img.png)
 
 --- 
 
@@ -476,6 +476,169 @@ CoroutineContext 는
 
 ## Jobs and awaiting children
 
+Structured Concurrency 설명하는 부분에서 언급되었던, 부모-자식 관계는 다음과 같은 조건을 만족시킴
+- 자식은 부모의 context 를 물려받음
+- 부모는 모든 자식 coroutine 이 끝날때 까지 suspend 됨
+- 부모가 cancel 되면, 자식 coroutine 들도 모두 cancel 됨
+- 자식이 destroy 되면, 부모도 destroy 됨
+
+위 4가지 조건들 중 1번은 context 에 의해 설명됨  
+나머지 3가지는 이제 설명할 Job 과 관련되어 있음  
+
+### What is Job?
+
+job 의 라이프 사이클은 아래와 같음
+![img_1.png](img/img_1.png)
+
+
+- coroutine builder 에 의해 coroutine 을 시작하면, active 상태임
+- active 상태에서는 자식 coroutine 을 만들 수 있음
+- 만약 lazily 하게 시작되는 coroutine 의 경우, new 상태임. active 상태로 변환하기 위해서는 start 해야 댐
+- coroutine 을 완료하면, completing 상태로 바뀜. 이 상태에서 자식 coroutine 을 기다림
+- 자식 coroutine 까지 모두 종료되면, completed 로 바뀜
+- cancel 되거나 fail 되면, canceling 상태로 바뀜. 이 상태에서 점유중인 자원을 해제하거나, 정리할 기회가 있음
+
+```kotlin
+suspend fun main() = coroutineScope {
+    val job = Job()
+    println(job)
+    job.complete()
+    println(job)
+
+    // launch is initially active by default
+    val activeJob = launch {
+        delay(1000)
+    }
+    println(activeJob) // StandaloneCoroutine{Active}@ADD
+    // here we wait until this job is done
+    activeJob.join() // (1 sec)
+    println(activeJob) // StandaloneCoroutine{Completed}@ADD
+
+    
+    // launch started lazily is in New state
+    val lazyJob = launch(start = CoroutineStart.LAZY) {
+        delay(1000)
+    }
+    println(lazyJob) // LazyStandaloneCoroutine{New}@ADD
+    // we need to start it, to make it active
+    lazyJob.start()
+    println(lazyJob) // LazyStandaloneCoroutine{Active}@ADD
+    lazyJob.join() // (1 sec)
+    println(lazyJob) //LazyStandaloneCoroutine{Completed}@ADD
+}
+```
+
+### Coroutine builders create their jobs based on their parent job
+
+launch, async 와 같은 coroutine builder 의 리턴값의 경우 Job 을 구현하고 있음  
+extension property 가 있어, coroutine scope 에서 쉽게 접근 가능함  
+
+```kotlin
+fun main(): Unit = runBlocking {
+    print(coroutineContext.job.isActive)
+}
+```
+
+**job의 경우 coroutine context 중에서 유일하게 상속되지 않는 것이다**
+- 각자의 job을 새로 만든다!
+- 그리고 argument 로 입력받은 job이나, 부모 coroutine 의 job 이 새로 만든 job의 부모 job으로 기록됨  
+- 이렇게 부모 job 은 자식 job 을 참조할 수 있고, 자식은 job 도 부모 job 을 참조할 수 있기에, cancellation 이나 exception handling 이 용이해짐
+
+만약 새로운 job 의 부모가 실제 부모 코루틴의 job이 아닌 경우, structured concurrency 는 무너짐
+
+```kotlin
+fun main(): Unit = runBlocking {
+    launch(Job()) { // 새로운 job 이 부모 코루틴의 job 을 대체함 
+        delay(100)
+        println("Will not be printed")
+    }
+}
+// 바로 종료됨
+```
+
+
+### Waiting for children
+
+job 의 join 함수를 사용해 자식 coroutine 들이 종료되길 기다릴 수 있음
+```kotiln
+fun main(): Unit = runBlocking {
+    val job1 = launch {
+        delay(1000)
+        println("Test1")
+    }
+    val job2 = launch {
+        delay(2000)
+        println("Test2")
+    }
+    
+    job1.join()
+    job2.join()
+    println("All tests are done")
+}
+```
+
+job 은 children 속성을 가지고 있어, 이를 이용하여 자식 job 에게 접근 할 수도 있음
+
+
+### Job factory function
+Job() 팩토리 함수를 이용하여, 어느 코루틴과 무관한 job을 생성할 수 있음  
+만약 위 함수를 이용하여 생성한 job을 이용하여 코루틴을 생성하게 되면, 기존 부모 코루틴과의 관계가 없어지게 됨... 주의 요망  
+
+그래서 위 함수를 사용하게 된다면 아래와 같이 사용해야 댐
+
+```kotlin
+suspend fun main(): Unit = coroutineScope {
+  val job = Job()
+  launch(job) { // the new job replaces one from parent
+    delay(1000)
+    println("Text 1")
+  }
+  launch(job) { // the new job replaces one from parent
+    delay(2000)
+    println("Text 2")
+  }
+  job.children.forEach { it.join() }
+}
+// (1 sec)
+// Text 1
+// (1 sec)
+// Text 2
+```
+
+위 함수의 경우 반환 타입은 CompletableJob 임    
+
+
+기존 Job 에서 추가적으로 구현된 기능이 있음 
+- complete()
+  - job 을 complete 하기 위해 호출함 
+  - 호출되면 자식 코루틴을 생성할 수 없음
+  - 만약 job 이 complete 되면 true 반환. 이미 complete 된 상태면 false 반환
+
+- completeExceptionally()
+  - job 을 exception 과 함께 complete 함
+  - 이는 모든 자식 코루틴은 즉시 cancelled 됨을 의미 함
+  - 반환 값 로직은 바로 직전 함수와 동일함
+
+위 기능은 주로 마지막 코루틴을 시작하고 호출함  
+주로 job 과 같이 사용함
+- job.complet() 하고 job.join()으로 간단하게 사용하기도 함
+
+```kotlin
+suspend fun main___(): Unit = coroutineScope {
+  val job = Job()
+  launch(job) { // the new job replaces one from parent
+    delay(1000)
+    println("Text 1")
+  }
+  launch(job) { // the new job replaces one from parent
+    delay(2000)
+    println("Text 2")
+  }
+  job.complete()
+  job.join()
+  println("All tests are done")
+}
+```
 
 ## Cancellation
 

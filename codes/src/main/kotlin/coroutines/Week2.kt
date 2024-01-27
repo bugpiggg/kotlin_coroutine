@@ -1,9 +1,11 @@
 package coroutines
 
-import kotlinx.coroutines.CoroutineName
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import kotlin.coroutines.CoroutineContext
@@ -33,7 +35,7 @@ suspend fun printNext() {
     coroutineContext[CounterContext]?.printNext()
 }
 
-suspend fun main(): Unit =
+suspend fun main_(): Unit =
     withContext(CounterContext("Outer")) {
         printNext() // Outer: 0
         launch {
@@ -51,9 +53,6 @@ suspend fun main(): Unit =
         }
         printNext() // Outer: 3
     }
-
-
-
 
 abstract class UuidProviderContext : CoroutineContext.Element {
     abstract fun nextUuid(): String
@@ -98,3 +97,65 @@ suspend fun nextUuid(): String =
         "UuidProviderContext not present"
     }.nextUuid()
 
+
+suspend fun main_2() = coroutineScope {
+    val job = Job()
+    println(job)
+    job.complete()
+    println(job)
+
+    // launch is initially active by default
+    val activeJob = launch {
+        delay(1000)
+    }
+    println(activeJob) // StandaloneCoroutine{Active}@ADD
+    // here we wait until this job is done
+    activeJob.join() // (1 sec)
+    println(activeJob) // StandaloneCoroutine{Completed}@ADD
+
+
+    // launch started lazily is in New state
+    val lazyJob = launch(start = CoroutineStart.LAZY) {
+        delay(1000)
+    }
+    println(lazyJob) // LazyStandaloneCoroutine{New}@ADD
+    // we need to start it, to make it active
+    lazyJob.start()
+    println(lazyJob) // LazyStandaloneCoroutine{Active}@ADD
+    lazyJob.join() // (1 sec)
+    println(lazyJob) //LazyStandaloneCoroutine{Completed}@ADD
+}
+
+fun main__(): Unit = runBlocking {
+    val job1 = launch {
+        delay(1000)
+        println("Test1")
+    }
+    val job2 = launch {
+        delay(2000)
+        println("Test2")
+    }
+
+    job1.join()
+    job2.join()
+    println("All tests are done")
+}
+
+suspend fun main(): Unit = coroutineScope {
+    val job = Job()
+    launch(job) { // the new job replaces one from parent
+        delay(1000)
+        println("Text 1")
+    }
+    launch(job) { // the new job replaces one from parent
+        delay(2000)
+        println("Text 2")
+    }
+    job.complete()
+    job.join()
+    println("All tests are done")
+}
+// (1 sec)
+// Text 1
+// (1 sec)
+// Text 2
