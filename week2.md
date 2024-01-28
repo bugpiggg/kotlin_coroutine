@@ -642,3 +642,221 @@ suspend fun main___(): Unit = coroutineScope {
 
 ## Cancellation
 
+cancellation 은 매우 중요한 기능임. 그냥 스레드를 kill 하는 것은 연결을 종료하거나 자원 해제와 같은 작업을 하지 않기 때문  
+
+### Basic cancellation
+Job 은 cancel() 함수를 지원함. 이는 아래 작용을 트리거함  
+- 코루틴은 첫 suspension point 에서 종료됨  
+- 만약 자식 코루틴들이 있으면, 마찬가지로 cancel 됨
+- cancel 되면, 다른 새로운 자식 코루틴을 생성할 수 없음(Cancelling 상태이기 때문)
+
+```kotlin
+suspend fun main(): Unit = coroutineScope {
+    val job = launch {
+        repeat(1_000) { i ->
+            delay(200)
+            println("Printing $i")
+        }
+    }
+    delay(1100)
+    job.cancel()
+    job.join()
+    println("Cancelled successfully")
+}
+// Printing 0
+// Printing 1
+// Printing 2
+// Printing 3
+// Printing 4
+// Cancelled successfully
+```
+
+만약 join() 을 호출하지 않는다면, 코루틴이 cancel 될 때까지 suspend 되지 않기 때문에, 중간에 "Cancelld suscessfully"가 호출될 것임  
+cancel 과 join 이 같이 호출되는 경우가 많기에, cancelAndJoin() 이라는 함수도 있음  
+
+### How does cancellation work?
+job 이 cancel 되면, "Cancelling" 상태로 바뀌면서, 첫 suspending point 에서 CancellationException 이 throw 됨  
+그래서 finally block 에서 자원을 해제할 수 있음  
+
+```kotlin
+suspend fun main(): Unit = coroutineScope {
+  val job = Job()
+  launch(job) {
+    try {
+      delay(Random.nextLong(2000))
+      println("Done")
+    } finally {
+      print("Will always be printed")
+    }
+  }
+  delay(1000)
+  job.cancelAndJoin()
+}
+// Will always be printed
+// (or)
+// Done
+// Will always be printed
+```
+
+### Just one more call
+CancellationException 이 throw 된 상태에서, 다른 코루틴은 생성할 수 없음  
+만약 생성하려고 한다면 무시됨 
+다른 suspending call 을 생성하면, CancellationException 이 발생함  
+
+만약 cancelling 상태에서, 또 다른 suspending call 을 부득이 하게 생성해야 한다면, withContext(NonCancellable) 함수를 이용하자  
+
+```kotlin
+suspend fun main(): Unit = coroutineScope {
+    val job = Job()
+    launch(job) {
+        try {
+            delay(200)
+            println("Coroutine finished")
+        } finally {
+            println("Finally")
+            withContext(NonCancellable) {
+                delay(1000L)
+                println("Cleanup done")
+            }
+        }
+    }
+    delay(100)
+    job.cancelAndJoin()
+    println("Done")
+}
+// Finally
+// CleanupDone
+// Done
+```
+
+### InvokeOnCompletion
+job이 "Cancelled" 나 "Completed" 상태에 도딜 했을때 handler 를 등록하게 해주는 함수임  
+
+```kotlin
+suspend fun main(): Unit = coroutineScope {
+    val job = launch {
+        delay(1000)
+    }
+    job.invokeOnCompletion { exception: Throwable? ->
+        println("Finished")
+    }
+    delay(400)
+    job.cancelAndJoin()
+}
+// Finished
+```
+
+handler 의 파라미터는 exception 이며, 아래와 같은 경우가 있을 수 있음 
+- 만약 job이 예외없이 끝났다면, null
+- 만약 job이 cancel 되었다면, CancellationException
+- 코루틴을 종료시킨 exception
+
+handler 가 등록되기도 전에, job 이 끝났다면, handler는 바로 실행됨 
+
+```kotlin
+suspend fun main(): Unit = coroutineScope {
+    val job = launch {
+        delay(2000)
+        println("Finished")
+    }
+    delay(800)
+    job.invokeOnCompletion { exception: Throwable? ->
+        println("Will always be printed")
+        println("The exception was: $exception")
+    }
+    delay(800)
+    job.cancelAndJoin()
+}
+// Will always be printed
+// The exception was:
+// kotlinx.coroutines.JobCancellationException
+// (or)
+// Finished
+// Will always be printed
+// The exception was null
+```
+
+### Stopping the unstoppable
+
+cancellation 은 suspension point 에서 발생함  
+그렇기에 위 포인트가 없으면 동작하지 않음...  
+
+만약 suspension point 가 없는데 cancel 을 활용하고 싶다면?
+1. yield() 함수를 활용할 수 있다. 이 함수는 suspend 하고 바로 resume 한다. CPU-intensive 하거나 time-intensive 한 연산의 중간중간에 yield() 끼워넣는 것은 고려해볼 수 있음
+
+```kotlin
+suspend fun main(): Unit = coroutineScope {
+    val job = Job()
+    launch(job) {
+        repeat(1_000) { i ->
+            Thread.sleep(200)
+            yield()
+            println("Printing $i")
+        }
+    }
+    delay(1100)
+    job.cancelAndJoin()
+    println("Cancelled successfully")
+    delay(1000)
+}
+// Printing 0
+// Printing 1
+// Printing 2
+// Printing 3
+// Printing 4
+// Cancelled successfully
+```
+
+2. 다른 방법은 state 를 추적하는 방법임. coroutineContext 에서 Job의 상태를 파악할 수 있음. isActive 필드나 ensureActive() 함수를 활용 할 수 있음  
+
+```kotlin
+suspend fun main(): Unit = coroutineScope {
+    val job = Job()
+    launch(job) {
+        do {
+            Thread.sleep(200)
+            println("Printing")
+        } while (isActive)
+    }
+    delay(1100)
+    job.cancelAndJoin()
+    println("Cancelled successfully")
+}
+// Printing
+// Printing
+// Printing
+// Printing
+// Printing
+// Printing
+// Cancelled successfully
+```
+
+```kotlin
+suspend fun main(): Unit = coroutineScope {
+    val job = Job()
+    launch(job) {
+        repeat(1000) { num ->
+            Thread.sleep(200)
+            ensureActive()
+            println("Printing $num")
+        }
+    }
+    delay(1100)
+    job.cancelAndJoin()
+    println("Cancelled successfully")
+}
+// Printing 0
+// Printing 1
+// Printing 2
+// Printing 3
+// Printing 4
+// Cancelled successfully
+```
+
+yield() 와 ensureActive() 는 얼핏 보기에 유사한 기능을 하는 것 같지만 매우 다르다!
+- ensureActive() 는 단순히 job 이 active 하지 않으면 예외를 던지는 기능을 한다. 가볍기에 이 함수를 사용하는것이 권장 됨
+- 그러나 yield() 의 경우에는, top-level suspension function 으로 실제로 suspend 되고 resume 되기 때문에 실행되는 스레드가 변경될 수 있음ss
+
+
+
+

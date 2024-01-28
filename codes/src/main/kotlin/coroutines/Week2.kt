@@ -2,11 +2,15 @@ package coroutines
 
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
+import java.util.Random
 import java.util.UUID
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.coroutineContext
@@ -141,7 +145,7 @@ fun main__(): Unit = runBlocking {
     println("All tests are done")
 }
 
-suspend fun main(): Unit = coroutineScope {
+suspend fun main___(): Unit = coroutineScope {
     val job = Job()
     launch(job) { // the new job replaces one from parent
         delay(1000)
@@ -159,3 +163,117 @@ suspend fun main(): Unit = coroutineScope {
 // Text 1
 // (1 sec)
 // Text 2
+
+suspend fun main1(): Unit = coroutineScope {
+    val job = launch {
+        repeat(1_000) { i ->
+            delay(200)
+            println("Printing $i")
+        }
+    }
+    delay(1100)
+    job.cancel()
+    job.join()
+    println("Cancelled successfully")
+}
+// Printing 0
+// Printing 1
+// Printing 2
+// Printing 3
+// Printing 4
+// Cancelled successfully
+
+suspend fun main3_(): Unit = coroutineScope {
+    val job = Job()
+    launch(job) {
+        try {
+            delay(Random().nextLong())
+            println("Done")
+        } finally {
+            print("Will always be printed")
+        }
+    }
+    delay(1000)
+    job.cancelAndJoin()
+}
+// Will always be printed
+// (or)
+// Done
+// Will always be printed
+
+suspend fun main3(): Unit = coroutineScope {
+    val job = Job()
+    launch(job) {
+        try {
+            delay(200)
+            println("Coroutine finished")
+        } finally {
+            println("Finally")
+            withContext(NonCancellable) {
+                delay(1000L)
+                println("Cleanup done")
+            }
+        }
+    }
+    delay(100)
+    job.cancelAndJoin()
+    println("Done")
+}
+// Finally
+// Cleanup
+// Done
+
+suspend fun main4(): Unit = coroutineScope {
+    val job = launch {
+        delay(1000)
+    }
+    job.invokeOnCompletion { exception: Throwable? ->
+        println("Finished")
+    }
+    delay(400)
+    job.cancelAndJoin()
+}
+// Finished
+
+suspend fun main(): Unit = coroutineScope {
+    val job = launch {
+        delay(2000)
+        println("Finished")
+    }
+    delay(800)
+    job.invokeOnCompletion { exception: Throwable? ->
+        println("Will always be printed")
+        println("The exception was: $exception")
+    }
+    delay(800)
+    job.cancelAndJoin()
+}
+// Will always be printed
+// The exception was:
+// kotlinx.coroutines.JobCancellationException
+// (or)
+// Finished
+// Will always be printed
+// The exception was null
+
+suspend fun main____(): Unit = coroutineScope {
+    val job = Job()
+    launch(job) {
+        repeat(1_000) { i ->
+            Thread.sleep(200)
+            yield()
+            println("Printing $i")
+        }
+    }
+    delay(1100)
+    job.cancelAndJoin()
+    println("Cancelled successfully")
+    delay(1000)
+}
+// Printing 0
+// Printing 1
+// Printing 2
+// Printing 3
+// Printing 4
+// Cancelled successfully
+
