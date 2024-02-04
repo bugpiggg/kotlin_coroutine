@@ -21,4 +21,9 @@ period: 2023.01.17 ~
   - Jobs and awaiting children
   - Cancellation
 
+## Week 3
+
+- [Kotlin Coroutines library](week3.md)
+  - Exception handling
+  - Coroutine scope functions
 
