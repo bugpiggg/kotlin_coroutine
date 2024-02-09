@@ -228,8 +228,90 @@ public interface ContinuationInterceptor :
 3. cpu intensive 한 작업에서는, Dispatchers.Default 가 가장 좋은 옵션임
 4. memory intensive 한 작업에서는, 대체로 스레드 수가 많을 수록 유리함
 
+# Constructing a coroutine scope
 
-# Coroutine scope functions
+## CoroutineScope factory function
+
+CoroutineScope 는 coroutineContext를 가지는 인터페이스이다 
 
 ```kotlin
+interface CoroutineScope {
+    val coroutineContext: CoroutineContext
+}
+```
+
+그렇기에 아래와 같이, 클래스 구현을 정의할 수 있다
+
+```kotlin
+class SomeClass : CoroutineScope {
+    override val coroutineContext: CoroutineContext = Job()
+    fun onStart() {
+        launch {
+            // ...
+        }
+    }
+}
+```
+
+위 방식은 편리하지만, 다른 호출부에서 CoroutineScope 의 다른 함수들을 호출할 수 있다는 단점을 가짐 like cancel  
+그렇기에 아래 방식을 제안함  
+
+```kotlin
+class SomeClass {
+    val scope: CoroutineScope = ...
+    fun onStart() {
+        scope.launch {
+            // ...
+        }
+    }
+}
+```
+
+## Constructing a coroutine on the backend
+
+대부분의 프레임워크에서는 suspending 함수를 지원함  
+
+그렇지만 우리가 직접 scope 를 정의해야 한다면 아래 사항들을 고려해야 함
+
+- 스레드 풀을 가지는 디스패쳐
+- 코루틴들을 독립적으로 관리하기 위한 SupervisorJob
+- 예외처리를 위한 CoroutineExceptionHandler
+
+```kotlin
+@Configuration
+public class CoroutineScopeConfiguration {
+    @Bean
+    fun coroutineDispatcher(): CoroutineDispatcher =
+        Dispatchers.IO.limitedParallelism(5)
+    @Bean
+    fun coroutineExceptionHandler() =
+        CoroutineExceptionHandler { _, throwable ->
+            FirebaseCrashlytics.getInstance()
+                .recordException(throwable)
+        }
+    @Bean
+    fun coroutineScope(
+        coroutineDispatcher: CoroutineDispatcher,
+        coroutineExceptionHandler: CoroutineExceptionHandler,
+    ) = CoroutineScope(
+        SupervisorJob() +
+            coroutineDispatcher +
+            coroutineExceptionHandler
+    )
+}
+```
+
+## Constructing a scope for additional calls
+
+scope 생성 예제
+
+```kotlin
+private val exceptionHandler =
+    CoroutineExceptionHandler { _, throwable ->
+        FirebaseCrashlytics.getInstance()
+        .recordException(throwable)
+    }
+val analyticsScope = CoroutineScope(
+        SupervisorJob() + exceptionHandler
+    )
 ```
