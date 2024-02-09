@@ -27,3 +27,8 @@ period: 2023.01.17 ~
   - Exception handling
   - Coroutine scope functions
 
+## Week 4
+
+- [Kotlin Coroutines library](week4.md)
+  - Dispatchers
+  - Constructing a coroutine scope
