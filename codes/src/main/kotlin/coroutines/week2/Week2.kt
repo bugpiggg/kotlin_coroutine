@@ -1,4 +1,4 @@
-package coroutines
+package coroutines.week2
 
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -73,7 +73,6 @@ class FakeUuidProviderContext(
 ) : UuidProviderContext() {
     override fun nextUuid(): String = fakeUuid
 }
-
 
 data class User(val id: String, val name: String)
 

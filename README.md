@@ -32,3 +32,9 @@ period: 2023.01.17 ~
 - [Kotlin Coroutines library](week4.md)
   - Dispatchers
   - Constructing a coroutine scope
+
+## Week 5
+
+- [Kotlin Coroutines library](week5.md)
+  - The problem with shared state
+  - Testing Kotlin Coroutines
