@@ -92,5 +92,3 @@ class FakeNetworkService : NetworkService {
         return User(id, "User$id")
     }
 }
-
-
