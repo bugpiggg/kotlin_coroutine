@@ -38,3 +38,15 @@ period: 2023.01.17 ~
 - [Kotlin Coroutines library](week5.md)
   - The problem with shared state
   - Testing Kotlin Coroutines
+  
+## Week 6
+
+- [Channel and Flow](week6.md)
+  - Channel
+  - Select
+
+## Week 7
+
+- [Channel and Flow](week7.md)
+  - Hot and Cold Data sources
+  - Flow Introduction
